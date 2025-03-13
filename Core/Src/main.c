@@ -81,14 +81,14 @@ uint16_t T_uart = 0;
 uint16_t Period_uart = 2000;  // [us]
 
 uint32_t T_cmd = 0;
-uint32_t Period_cmd = 1000000;  // [us]
+uint32_t Period_cmd = 500000;  // [us]
 
 
 uint16_t encoder_T = 0;
 uint16_t encoder_T_prev = 0;
 uint16_t encoder_dt = 0;
 
-const uint16_t encoder_offset = 386;
+const uint16_t encoder_offset = 410;
 const uint8_t right_step = 180;
 
 uint8_t i2c1_buf_H = 0;
@@ -117,25 +117,26 @@ volatile uint8_t adc1_go = 1;
 volatile uint8_t adc1_err = 0;
 volatile uint16_t current_value = 0;
 double current_value_lpf = 0;
-uint16_t current_offset = 150;
+uint16_t current_offset = 100;
 
 double lpf_current_alpha = 1;
 double lpf_current_output_prev = 0;
 
-double lpf_speed_alpha = 1;
+double lpf_speed_alpha = 0.05;
 double lpf_speed_output_prev = 0;
 
 
 
 //////////  PID GAIN  //////////
-float motor_current_gain_P = 0.05;
-float motor_current_gain_I = 0.00004;
-float motor_speed_gain_P = 20;
-float motor_speed_gain_I = 0.0008;
+float motor_current_gain_P = 0.2;
+float motor_current_gain_I = 0;
+float motor_speed_gain_P = 70;
+float motor_speed_gain_I = 0.0015;
 float motor_speed_gain_A = 0;
-float motor_position_gain_P = 0.005;
+float motor_position_gain_P = 0.1;
 float motor_position_gain_I = 0;
-float motor_position_gain_D = 0;
+float motor_position_gain_D = 1;
+////////////////////////////////
 
 uint16_t motor_position = 0;
 uint16_t motor_position_prev = 0;
@@ -260,11 +261,12 @@ void encoder_read(){
 			encoder_speed_filtered = encoder_speed;
 			encoder_speed_filtered_dt_prev = encoder_speed_filtered_dt;
 			encoder_speed_filtered_dt = (double)encoder_speed_filtered / (double)encoder_dt * 1000;
-			encoder_accel_filtered_dt = (encoder_speed_filtered_dt - encoder_speed_filtered_dt_prev) / (double)encoder_dt * 1000;
-		if(encoder_speed > 4000){ encoder_turn -= 1; }
-		if(encoder_speed < -4000){ encoder_turn += 1; }
-		encoder_value_multi_turn = encoder_turn * 4096 + encoder_value_filtered;
 		}
+		//if(encoder_value > 3800 && encoder_value_prev < 200){ encoder_turn--; }
+		//if(encoder_value < 200 && encoder_value_prev > 3800){ encoder_turn++; }
+		//encoder_value_multi_turn = encoder_turn * 4096 + encoder_value_filtered;
+		encoder_value_multi_turn = encoder_value_filtered;
+
 		if(HAL_I2C_Mem_Read_IT(&hi2c1, (ADDR_ENCODER << 1), ADDR_REG_ANGLE_H, 1, &i2c1_buf_H, 1U) == HAL_OK){ i2c1_proc = 1; }
 		else{ i2c1_err = 1; }
 	}
@@ -310,11 +312,9 @@ void torque(int16_t v){
 void motor_pid(){
 	motor_position_prev = motor_position;
 	motor_speed_prev = motor_speed;
-	motor_position = encoder_value_multi_turn;
-	motor_speed = lpf_speed((double)(encoder_speed_filtered_dt), lpf_speed_alpha);
-	//motor_speed = encoder_speed_filtered_dt;
+	motor_position = encoder_value_filtered;
+	motor_speed = encoder_speed_filtered_dt;//lpf_speed((double)(encoder_speed_filtered_dt), lpf_speed_alpha);
 
-	/*
 	motor_position_error_prev = motor_position_error;
 	motor_position_error = motor_position_cmd - motor_position;
 	motor_position_term_P = motor_position_error * motor_position_gain_P;
@@ -328,29 +328,23 @@ void motor_pid(){
 	motor_position_error_sign_prev = motor_position_error_sign;
 	if(motor_position_error > 0){ motor_position_error_sign = 1; }
 	if(motor_position_error < 0){ motor_position_error_sign = -1; }
-*/
+
 
 	motor_speed_error = motor_speed_cmd - motor_speed;
 	motor_speed_term_P = motor_speed_error  * motor_speed_gain_P;
 
-	motor_accel_cmd = ((double)motor_speed_cmd - (double)motor_speed_cmd_prev) * 1000 / (double)dt;
-	motor_speed_cmd_prev = motor_speed_cmd;
-	motor_accel_error = motor_accel_cmd;
-	motor_speed_term_A = motor_accel_error * motor_speed_gain_A;
-	//if(motor_speed_term_A < 0){ motor_speed_term_A = 0; }
+	motor_speed_term_I += motor_speed_error * motor_speed_gain_I * (float)dt;
 
-	motor_speed_term_I += motor_speed_error * motor_speed_gain_I * (float)dt + motor_speed_term_A;
-	//if(motor_position_error_sign != motor_position_error_sign_prev){ motor_speed_term_I = -motor_speed_term_I; }  // I term scalaization
 	if(motor_speed_term_I > motor_speed_term_I_max){ motor_speed_term_I = motor_speed_term_I_max; }
 	if(motor_speed_term_I < -motor_speed_term_I_max){ motor_speed_term_I = -motor_speed_term_I_max; }
 
 	motor_speed_control_out = motor_speed_term_P + motor_speed_term_I;
-	if (motor_speed_control_out >= 0.0){ motor_speed_control_dir = 1; }
+	if (motor_speed_control_out >= 0){ motor_speed_control_dir = 1; }
 	else { motor_speed_control_dir = -1; }
 	motor_current_cmd = abs((int16_t)motor_speed_control_out);
 
 	motor_current = current_value_lpf;
-	motor_current_error = motor_current_cmd - motor_current;
+	motor_current_error = (motor_current_cmd - motor_current);
 	motor_current_term_P = motor_current_error * motor_current_gain_P;
 	motor_current_term_I += motor_current_error * motor_current_gain_I * (float)dt;
 	if(motor_current_term_I > motor_current_term_I_max){ motor_current_term_I = motor_current_term_I_max; }
@@ -425,7 +419,6 @@ int main(void)
 	  dt_update();
 	  motor_pid();
 	  torque((int16_t)motor_current_control_out * motor_speed_control_dir);
-
 	  if (i2c1_go == 1){ i2c1_go = 0; encoder_read(); }
 	  if (i2c1_err == 1){ i2c1_err = 0; encoder_read(); }
 	  if (adc1_go == 1){
@@ -444,9 +437,11 @@ int main(void)
 	  T_cmd += dt;
 	  if(T_cmd >= Period_cmd){
 		  T_cmd -= Period_cmd;
-		  if(motor_speed_cmd == 1){ motor_speed_cmd = 0; }
-		  else if(motor_speed_cmd == 0){ motor_speed_cmd = 1; }
-		  else{ motor_speed_cmd = 1; }
+		  if(motor_position_cmd == 0){ motor_position_cmd = 30; }
+		  else if(motor_position_cmd == 3000){ motor_position_cmd = 2000; }
+		  else if(motor_position_cmd == 2000){ motor_position_cmd = 1000; }
+		  else if(motor_position_cmd == 1000){ motor_position_cmd = 3000; }
+		  else{ motor_position_cmd = 3000; }
 	  }
 
 	  T_uart += dt;
@@ -458,9 +453,9 @@ int main(void)
 			  uint8_t str_1[5]; uint8_t str_2[5]; uint8_t str_3[5]; uint8_t str_4[5];
 			  uint8_t str_min[4] = "-100"; uint8_t str_max[4] = "2000"; uint8_t str_eof[2] = "\r\n";
 
-			  sprintf(buf, "%d,%d,%d,%d\r\n", motor_speed_plot*50, motor_speed_cmd_plot*50,
-					  motor_current_plot, motor_current_cmd_plot);
-					 // ,motor_position, motor_position_cmd);
+			  sprintf(buf, "%d,%d,%d,%d,%d,%d\r\n", motor_speed_plot*50, motor_speed_cmd_plot*50,
+					  motor_current_plot, motor_current_cmd_plot
+					  ,motor_position, motor_position_cmd);
 			  HAL_UART_Transmit_IT(&huart1, buf, 50);
 	  	}
 	  }
@@ -663,8 +658,8 @@ static void MX_TIM2_Init(void)
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 0;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 3599;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
+  htim2.Init.Period = 1799;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
