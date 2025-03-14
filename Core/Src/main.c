@@ -81,7 +81,7 @@ uint16_t T_uart = 0;
 uint16_t Period_uart = 2000;  // [us]
 
 uint32_t T_cmd = 0;
-uint32_t Period_cmd = 500000;  // [us]
+uint32_t Period_cmd = 250000;  // [us]
 
 
 uint16_t encoder_T = 0;
@@ -117,7 +117,7 @@ volatile uint8_t adc1_go = 1;
 volatile uint8_t adc1_err = 0;
 volatile uint16_t current_value = 0;
 double current_value_lpf = 0;
-uint16_t current_offset = 100;
+double current_offset = 100;
 
 double lpf_current_alpha = 1;
 double lpf_current_output_prev = 0;
@@ -130,12 +130,12 @@ double lpf_speed_output_prev = 0;
 //////////  PID GAIN  //////////
 float motor_current_gain_P = 0.2;
 float motor_current_gain_I = 0;
-float motor_speed_gain_P = 70;
-float motor_speed_gain_I = 0.0015;
+float motor_speed_gain_P = 32000;
+float motor_speed_gain_I = 1.4;
 float motor_speed_gain_A = 0;
-float motor_position_gain_P = 0.1;
+float motor_position_gain_P = 0.00003;
 float motor_position_gain_I = 0;
-float motor_position_gain_D = 1;
+float motor_position_gain_D = 0.002;
 ////////////////////////////////
 
 uint16_t motor_position = 0;
@@ -159,7 +159,6 @@ double motor_accel_cmd;
 double motor_accel_error;
 double motor_speed_error = 0;
 double motor_speed_term_P = 0;
-//double motor_speed_term_P_max = 1500;
 double motor_speed_term_I = 0;
 double motor_speed_term_I_max = 2000;
 double motor_speed_term_A = 0;
@@ -259,8 +258,7 @@ void encoder_read(){
 		if(abs(encoder_acc) < 100){
 			encoder_value_filtered = encoder_value;
 			encoder_speed_filtered = encoder_speed;
-			encoder_speed_filtered_dt_prev = encoder_speed_filtered_dt;
-			encoder_speed_filtered_dt = (double)encoder_speed_filtered / (double)encoder_dt * 1000;
+			encoder_speed_filtered_dt = (double)encoder_speed_filtered / (double)encoder_dt;// * (double)1000.0;
 		}
 		//if(encoder_value > 3800 && encoder_value_prev < 200){ encoder_turn--; }
 		//if(encoder_value < 200 && encoder_value_prev > 3800){ encoder_turn++; }
@@ -313,7 +311,8 @@ void motor_pid(){
 	motor_position_prev = motor_position;
 	motor_speed_prev = motor_speed;
 	motor_position = encoder_value_filtered;
-	motor_speed = encoder_speed_filtered_dt;//lpf_speed((double)(encoder_speed_filtered_dt), lpf_speed_alpha);
+	motor_speed = lpf_speed((double)(encoder_speed_filtered_dt), lpf_speed_alpha);
+
 
 	motor_position_error_prev = motor_position_error;
 	motor_position_error = motor_position_cmd - motor_position;
@@ -328,6 +327,7 @@ void motor_pid(){
 	motor_position_error_sign_prev = motor_position_error_sign;
 	if(motor_position_error > 0){ motor_position_error_sign = 1; }
 	if(motor_position_error < 0){ motor_position_error_sign = -1; }
+
 
 
 	motor_speed_error = motor_speed_cmd - motor_speed;
@@ -352,8 +352,8 @@ void motor_pid(){
 	motor_current_control_out = motor_current_term_P + motor_current_term_I;
 	if(motor_current_control_out < 0){ motor_current_control_out = 0; }
 
-	motor_speed_plot = (uint16_t)motor_speed;
-	motor_speed_cmd_plot = (uint16_t)motor_speed_cmd;
+	motor_speed_plot = (uint16_t)(motor_speed * 60000);
+	motor_speed_cmd_plot = (uint16_t)(motor_speed_cmd * 60000);
 	motor_current_plot = (uint16_t)motor_current;
 	motor_current_cmd_plot = (uint16_t)motor_current_cmd;
 }
@@ -437,11 +437,19 @@ int main(void)
 	  T_cmd += dt;
 	  if(T_cmd >= Period_cmd){
 		  T_cmd -= Period_cmd;
-		  if(motor_position_cmd == 0){ motor_position_cmd = 30; }
-		  else if(motor_position_cmd == 3000){ motor_position_cmd = 2000; }
-		  else if(motor_position_cmd == 2000){ motor_position_cmd = 1000; }
-		  else if(motor_position_cmd == 1000){ motor_position_cmd = 3000; }
-		  else{ motor_position_cmd = 3000; }
+
+		  if(motor_position_cmd == 1000){ motor_position_cmd = 1500; }
+		  else if(motor_position_cmd == 1500){ motor_position_cmd = 900; }
+		  else if(motor_position_cmd == 900){ motor_position_cmd = 3000; }
+		  else if(motor_position_cmd == 3000){ motor_position_cmd = 2500; }
+		  else if(motor_position_cmd == 2500){ motor_position_cmd = 3100; }
+		  else if(motor_position_cmd == 3100){ motor_position_cmd = 1000; }
+		  else{ motor_position_cmd = 1000; }
+/*
+		  if(motor_speed_cmd == 0){ motor_speed_cmd = 0.03; }
+		  else if(motor_speed_cmd == 0.03){ motor_speed_cmd = 0.0005; }
+		  else if(motor_speed_cmd == 0.0005){ motor_speed_cmd = 0; }
+		  else{ motor_speed_cmd = 0; }*/
 	  }
 
 	  T_uart += dt;
@@ -451,11 +459,19 @@ int main(void)
 			  uart1_go = 0;
 			  uint8_t buf[50] = { '\0', };
 			  uint8_t str_1[5]; uint8_t str_2[5]; uint8_t str_3[5]; uint8_t str_4[5];
-			  uint8_t str_min[4] = "-100"; uint8_t str_max[4] = "2000"; uint8_t str_eof[2] = "\r\n";
+			  int16_t plot_min = -10; int16_t plot_max = 10; uint8_t str_eof[2] = "\r\n";
+/*
+			  			  sprintf(buf, "%d,%d,%d,%d\r\n", plot_min, plot_max, motor_speed_plot, motor_speed_cmd_plot);
 
-			  sprintf(buf, "%d,%d,%d,%d,%d,%d\r\n", motor_speed_plot*50, motor_speed_cmd_plot*50,
-					  motor_current_plot, motor_current_cmd_plot
-					  ,motor_position, motor_position_cmd);
+
+			  sprintf(buf, "%d,%d,%d,%d\r\n", motor_speed_plot, motor_speed_cmd_plot,
+			  					  motor_current_plot, motor_current_cmd_plot);
+*/
+
+			  sprintf(buf, "%d,%d,%d,%d,%d,%d\r\n", motor_speed_plot, motor_speed_cmd_plot,
+			  					  motor_current_plot, motor_current_cmd_plot
+			  					  ,motor_position, motor_position_cmd);
+
 			  HAL_UART_Transmit_IT(&huart1, buf, 50);
 	  	}
 	  }
